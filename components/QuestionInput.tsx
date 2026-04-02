@@ -14,6 +14,52 @@ const STORAGE_KEYS = {
   STAGED_SNIPPETS: 'paperchecker_draft_staged_snippets'
 };
 
+/** localStorage is ~5MB per origin shared with all keys; avoid uncaught QuotaExceededError. */
+function persistDraftToStorage(
+  rawInput: string,
+  stagedSnippets: string[]
+): { ok: boolean; warning?: string } {
+  const attempts: Array<{ maxRaw: number | null; maxStaged: number | null }> = [
+    { maxRaw: null, maxStaged: null },
+    { maxRaw: 1_200_000, maxStaged: null },
+    { maxRaw: 400_000, maxStaged: null },
+    { maxRaw: 1_200_000, maxStaged: 0 },
+    { maxRaw: 200_000, maxStaged: 0 },
+    { maxRaw: 50_000, maxStaged: 0 },
+  ];
+
+  for (const a of attempts) {
+    const raw = a.maxRaw == null ? rawInput : rawInput.slice(0, a.maxRaw);
+    const staged = a.maxStaged == null ? stagedSnippets : stagedSnippets.slice(0, a.maxStaged);
+    try {
+      localStorage.setItem(STORAGE_KEYS.RAW_INPUT, raw);
+      localStorage.setItem(STORAGE_KEYS.STAGED_SNIPPETS, JSON.stringify(staged));
+      const trimmed =
+        raw.length < rawInput.length || staged.length < stagedSnippets.length;
+      return {
+        ok: true,
+        warning: trimmed
+          ? 'Draft was trimmed or staged items dropped to fit browser storage. Your full text stays in this session until you leave the page.'
+          : undefined,
+      };
+    } catch (e) {
+      const isQuota =
+        e instanceof DOMException &&
+        (e.name === 'QuotaExceededError' || e.code === 22);
+      if (!isQuota) {
+        console.warn('Draft save failed', e);
+        return { ok: false, warning: 'Could not save draft (storage error).' };
+      }
+    }
+  }
+
+  return {
+    ok: false,
+    warning:
+      'Browser storage is full. Copy your text elsewhere, then use Clear All or free space in site settings.',
+  };
+}
+
 const LOADING_MESSAGES = [
   "Detecting question components...",
   "Parsing options A, B, C, D...",
@@ -28,6 +74,7 @@ const QuestionInput: React.FC<QuestionInputProps> = ({ onAdd, onAddBulk }) => {
   const [progress, setProgress] = useState(0);
   const [rawInput, setRawInput] = useState('');
   const [stagedSnippets, setStagedSnippets] = useState<string[]>([]);
+  const [draftStorageNotice, setDraftStorageNotice] = useState<string | null>(null);
 
   // Load drafts on mount
   useEffect(() => {
@@ -45,12 +92,12 @@ const QuestionInput: React.FC<QuestionInputProps> = ({ onAdd, onAddBulk }) => {
     }
   }, []);
 
-  // Auto-save drafts whenever they change
+  // Auto-save drafts whenever they change (never throw on quota exceeded)
   useEffect(() => {
-    if (!isProcessing) {
-      localStorage.setItem(STORAGE_KEYS.RAW_INPUT, rawInput);
-      localStorage.setItem(STORAGE_KEYS.STAGED_SNIPPETS, JSON.stringify(stagedSnippets));
-    }
+    if (isProcessing) return;
+    const result = persistDraftToStorage(rawInput, stagedSnippets);
+    if (result.ok && !result.warning) setDraftStorageNotice(null);
+    else if (result.warning) setDraftStorageNotice(result.warning);
   }, [rawInput, stagedSnippets, isProcessing]);
 
   useEffect(() => {
@@ -80,6 +127,7 @@ const QuestionInput: React.FC<QuestionInputProps> = ({ onAdd, onAddBulk }) => {
     localStorage.removeItem(STORAGE_KEYS.STAGED_SNIPPETS);
     setRawInput('');
     setStagedSnippets([]);
+    setDraftStorageNotice(null);
   };
 
   const handleSmartPasteSubmit = async (e: React.FormEvent) => {
@@ -157,7 +205,7 @@ const QuestionInput: React.FC<QuestionInputProps> = ({ onAdd, onAddBulk }) => {
           <div className="flex justify-between items-center px-1">
             <label className="text-[10px] font-black text-slate-400 uppercase tracking-[0.2em]">Raw Content Entry</label>
             {(rawInput || stagedSnippets.length > 0) && (
-              <div className="flex items-center gap-2">
+              <div className="flex flex-col items-end gap-1 sm:flex-row sm:items-center sm:gap-2">
                 <span className="text-[8px] font-black text-green-500 uppercase tracking-widest animate-pulse">Draft Saved</span>
                 <button 
                   onClick={clearDraft}
@@ -168,6 +216,11 @@ const QuestionInput: React.FC<QuestionInputProps> = ({ onAdd, onAddBulk }) => {
               </div>
             )}
           </div>
+          {draftStorageNotice && (
+            <p className="text-[10px] font-bold text-amber-700 dark:text-amber-400 bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-800 rounded-xl px-3 py-2 leading-snug">
+              {draftStorageNotice}
+            </p>
+          )}
           <div>
             <textarea 
               rows={10}

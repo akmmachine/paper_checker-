@@ -93,6 +93,7 @@ interface LayoutProps {
   history: Paper[];
   onLoadHistory: (paper: Paper) => void;
   onDeleteHistory: (e: React.MouseEvent, id: string) => void;
+  onRenamePaper: (id: string, newTitle: string) => Promise<boolean>;
   activePaperId: string | null;
   isDarkMode: boolean;
   toggleDarkMode: () => void;
@@ -110,6 +111,7 @@ const Layout: React.FC<LayoutProps> = ({
   history,
   onLoadHistory,
   onDeleteHistory,
+  onRenamePaper,
   activePaperId,
   isDarkMode,
   toggleDarkMode,
@@ -129,6 +131,8 @@ const Layout: React.FC<LayoutProps> = ({
     }
     return true;
   });
+  const [renamingPaperId, setRenamingPaperId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
 
   useEffect(() => {
     try {
@@ -202,33 +206,98 @@ const Layout: React.FC<LayoutProps> = ({
         ) : (
           history.map((paper) => (
             <div key={paper.id} className="relative group px-1">
-              <button
-                onClick={() => {
-                  onLoadHistory(paper);
-                  closeDrawer();
-                }}
-                className={`w-full text-left p-3.5 rounded-2xl border transition-all active:scale-[0.97] ${
-                  activePaperId === paper.id ? 'bg-slate-800 border-indigo-600' : 'bg-slate-900/40 border-slate-800 hover:bg-slate-800'
-                }`}
-              >
-                <div className={`text-[11px] font-bold truncate ${activePaperId === paper.id ? 'text-indigo-400' : 'text-slate-200'}`}>
-                  {paper.title}
-                </div>
-                <div className="flex items-center gap-2 mt-2 flex-wrap">
-                  <span className={`text-[8px] px-1.5 py-0.5 rounded-md font-black border uppercase tracking-tighter ${getStatusBadge(paper.status)}`}>
-                    {paper.status.replace('_', ' ')}
-                  </span>
-                  <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tight">{formatTime(paper.createdAt)}</span>
-                </div>
-              </button>
-              <button
-                onClick={(e) => onDeleteHistory(e, paper.id)}
-                className="absolute top-2 right-3 p-1.5 text-slate-700 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-all"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                </svg>
-              </button>
+              {renamingPaperId === paper.id ? (
+                <form
+                  className="p-3.5 rounded-2xl border border-indigo-500/50 bg-slate-800/80"
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    const v = renameDraft.trim();
+                    if (!v) return;
+                    if (await onRenamePaper(paper.id, v)) {
+                      setRenamingPaperId(null);
+                      setRenameDraft('');
+                    }
+                  }}
+                >
+                  <input
+                    value={renameDraft}
+                    onChange={(e) => setRenameDraft(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === 'Escape') {
+                        setRenamingPaperId(null);
+                        setRenameDraft('');
+                      }
+                    }}
+                    className="w-full text-[11px] font-bold bg-slate-900 border border-slate-600 rounded-lg px-2 py-1.5 text-slate-100"
+                    maxLength={200}
+                    autoFocus
+                    aria-label="Rename paper"
+                  />
+                  <div className="flex gap-2 mt-2">
+                    <button
+                      type="submit"
+                      className="px-2 py-1 rounded-md bg-indigo-600 text-white text-[8px] font-black uppercase"
+                    >
+                      Save
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setRenamingPaperId(null);
+                        setRenameDraft('');
+                      }}
+                      className="px-2 py-1 rounded-md border border-slate-600 text-[8px] font-black uppercase text-slate-400"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                </form>
+              ) : (
+                <>
+                  <button
+                    onClick={() => {
+                      onLoadHistory(paper);
+                      closeDrawer();
+                    }}
+                    className={`w-full text-left p-3.5 pr-11 rounded-2xl border transition-all active:scale-[0.97] ${
+                      activePaperId === paper.id ? 'bg-slate-800 border-indigo-600' : 'bg-slate-900/40 border-slate-800 hover:bg-slate-800'
+                    }`}
+                  >
+                    <div className={`text-[11px] font-bold truncate ${activePaperId === paper.id ? 'text-indigo-400' : 'text-slate-200'}`}>
+                      {paper.title}
+                    </div>
+                    <div className="flex items-center gap-2 mt-2 flex-wrap">
+                      <span className={`text-[8px] px-1.5 py-0.5 rounded-md font-black border uppercase tracking-tighter ${getStatusBadge(paper.status)}`}>
+                        {paper.status.replace('_', ' ')}
+                      </span>
+                      <span className="text-[8px] text-slate-600 font-bold uppercase tracking-tight">{formatTime(paper.createdAt)}</span>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      setRenameDraft(paper.title);
+                      setRenamingPaperId(paper.id);
+                    }}
+                    className="absolute top-2 right-9 p-1.5 text-slate-600 hover:text-indigo-400 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                    title="Rename"
+                    aria-label={`Rename ${paper.title}`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                    </svg>
+                  </button>
+                  <button
+                    onClick={(e) => onDeleteHistory(e, paper.id)}
+                    className="absolute top-2 right-3 p-1.5 text-slate-700 hover:text-red-500 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-all"
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                    </svg>
+                  </button>
+                </>
+              )}
             </div>
           ))
         )}

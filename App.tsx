@@ -12,6 +12,7 @@ import { generateAuditPDF } from './services/pdfService';
 
 const STORAGE_KEY_DARK_MODE = 'paperchecker_dark_mode_v2';
 const STORAGE_KEY_USER_ID = 'paperchecker_active_user_id';
+const MAX_PAPER_TITLE_LEN = 200;
 
 const App: React.FC = () => {
   const [currentUser, setCurrentUser] = useState<UserProfile | null>(() => {
@@ -26,6 +27,10 @@ const App: React.FC = () => {
   const [isSyncing, setIsSyncing] = useState<boolean>(false);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [targetQuestionId, setTargetQuestionId] = useState<string | null>(null);
+  const [paperTitleEditing, setPaperTitleEditing] = useState(false);
+  const [paperTitleDraft, setPaperTitleDraft] = useState('');
+  const [archiveRenamingId, setArchiveRenamingId] = useState<string | null>(null);
+  const [archiveRenameDraft, setArchiveRenameDraft] = useState('');
   
   const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
     try {
@@ -192,6 +197,30 @@ const App: React.FC = () => {
     }
   };
 
+  const handleRenamePaper = useCallback(async (id: string, newTitle: string): Promise<boolean> => {
+    const t = newTitle.trim();
+    if (!t) {
+      window.alert('Enter a name for this paper.');
+      return false;
+    }
+    if (t.length > MAX_PAPER_TITLE_LEN) {
+      window.alert(`Use at most ${MAX_PAPER_TITLE_LEN} characters.`);
+      return false;
+    }
+    const paper = history.find((p) => p.id === id);
+    if (!paper) return false;
+    if (paper.title === t) return true;
+    setIsSyncing(true);
+    try {
+      const updated: Paper = { ...paper, title: t, subject: t };
+      await dbService.savePaper(updated);
+      setHistory((prev) => prev.map((p) => (p.id === id ? updated : p)));
+      return true;
+    } finally {
+      setIsSyncing(false);
+    }
+  }, [history]);
+
   const allLogs: AuditLog[] = history.flatMap(p => 
     p.questions.flatMap(q => 
       (q.audit?.logs || []).map(log => ({
@@ -245,6 +274,11 @@ const App: React.FC = () => {
     }
   }, [activeTab, activePaperId, targetQuestionId]);
 
+  useEffect(() => {
+    setPaperTitleEditing(false);
+    setArchiveRenamingId(null);
+  }, [activeTab, currentPaper?.id]);
+
   if (isLoading) {
     return (
       <div className="h-screen-dynamic w-full flex flex-col items-center justify-center bg-slate-900 text-white">
@@ -269,6 +303,7 @@ const App: React.FC = () => {
       onLoadHistory={(p) => navigateToTab('review', p.id)}
       activePaperId={activePaperId} 
       onDeleteHistory={handleDeleteHistory}
+      onRenamePaper={handleRenamePaper}
       isDarkMode={isDarkMode} 
       toggleDarkMode={() => setIsDarkMode(!isDarkMode)}
       isSyncing={isSyncing}
@@ -278,17 +313,74 @@ const App: React.FC = () => {
       
       {activeTab === 'review' && (
         <div className="space-y-4 lg:space-y-6">
-          <header className="mb-6 lg:mb-8 border-b border-slate-100 dark:border-slate-800 pb-5 flex justify-between items-end">
-            <div>
-              <h1 className="text-2xl lg:text-3xl font-black text-slate-900 dark:text-slate-50 tracking-tight">
-                {currentPaper ? currentPaper.title : 'Drafts'}
-              </h1>
+          <header className="mb-6 lg:mb-8 border-b border-slate-100 dark:border-slate-800 pb-5 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end">
+            <div className="min-w-0 flex-1">
+              {currentPaper ? (
+                paperTitleEditing ? (
+                  <form
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 max-w-2xl"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (await handleRenamePaper(currentPaper.id, paperTitleDraft)) setPaperTitleEditing(false);
+                    }}
+                  >
+                    <input
+                      value={paperTitleDraft}
+                      onChange={(e) => setPaperTitleDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setPaperTitleEditing(false);
+                      }}
+                      className="flex-1 min-w-0 text-2xl lg:text-3xl font-black tracking-tight bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-slate-900 dark:text-slate-50"
+                      maxLength={MAX_PAPER_TITLE_LEN}
+                      autoFocus
+                      aria-label="Paper name"
+                    />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button
+                        type="submit"
+                        className="px-4 py-2 rounded-xl bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest"
+                      >
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaperTitleEditing(false)}
+                        className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-600 text-slate-600 dark:text-slate-300 text-[10px] font-black uppercase"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-2 min-w-0">
+                    <h1 className="text-2xl lg:text-3xl font-black text-slate-900 dark:text-slate-50 tracking-tight truncate min-w-0">
+                      {currentPaper.title}
+                    </h1>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaperTitleDraft(currentPaper.title);
+                        setPaperTitleEditing(true);
+                      }}
+                      className="shrink-0 p-2 rounded-xl text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      title="Rename paper"
+                      aria-label="Rename paper"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              ) : (
+                <h1 className="text-2xl lg:text-3xl font-black text-slate-900 dark:text-slate-50 tracking-tight">Drafts</h1>
+              )}
               <p className="text-xs lg:text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">Self-audit and prepare for submission.</p>
             </div>
             {currentPaper && (
-              <button 
+              <button
                 onClick={() => generateAuditPDF(currentPaper)}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 shrink-0 self-start sm:self-auto"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                 Export PDF
@@ -340,34 +432,95 @@ const App: React.FC = () => {
                     {history.map((p) => {
                       const n = p.questions.length;
                       const isActive = p.id === activePaperId;
+                      const isRenaming = archiveRenamingId === p.id;
                       return (
-                        <button
+                        <div
                           key={p.id}
-                          type="button"
-                          onClick={() => navigateToTab('review', p.id)}
-                          className={`text-left p-4 rounded-2xl border transition-all active:scale-[0.99] ${
+                          className={`relative rounded-2xl border transition-all ${
                             isActive
                               ? 'bg-indigo-50 dark:bg-slate-800 border-indigo-400 dark:border-indigo-500 ring-1 ring-indigo-400/40'
                               : 'bg-white dark:bg-slate-800/80 border-slate-200 dark:border-slate-700 hover:border-indigo-300 dark:hover:border-slate-600'
                           }`}
                         >
-                          <div className={`text-sm font-bold truncate ${isActive ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-900 dark:text-slate-100'}`}>
-                            {p.title}
-                          </div>
-                          <div className="flex items-center gap-2 mt-3 flex-wrap">
-                            <span
-                              className={`text-[8px] px-1.5 py-0.5 rounded-md font-black border uppercase tracking-tighter ${paperStatusBadgeClass(p.status)}`}
+                          {isRenaming ? (
+                            <form
+                              className="p-4"
+                              onSubmit={async (e) => {
+                                e.preventDefault();
+                                if (await handleRenamePaper(p.id, archiveRenameDraft)) setArchiveRenamingId(null);
+                              }}
                             >
-                              {p.status.replace('_', ' ')}
-                            </span>
-                            <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold tabular-nums">
-                              {n} {n === 1 ? 'question' : 'questions'}
-                            </span>
-                            <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
-                              {formatDraftTime(p.createdAt)}
-                            </span>
-                          </div>
-                        </button>
+                              <input
+                                value={archiveRenameDraft}
+                                onChange={(e) => setArchiveRenameDraft(e.target.value)}
+                                onKeyDown={(e) => {
+                                  if (e.key === 'Escape') setArchiveRenamingId(null);
+                                }}
+                                className="w-full text-sm font-bold bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-600 rounded-lg px-2 py-1.5 text-slate-900 dark:text-slate-100"
+                                maxLength={MAX_PAPER_TITLE_LEN}
+                                autoFocus
+                                aria-label="Rename paper"
+                              />
+                              <div className="flex gap-2 mt-2">
+                                <button
+                                  type="submit"
+                                  className="px-3 py-1 rounded-lg bg-indigo-600 text-white text-[9px] font-black uppercase"
+                                >
+                                  Save
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setArchiveRenamingId(null)}
+                                  className="px-3 py-1 rounded-lg border border-slate-200 dark:border-slate-600 text-[9px] font-black uppercase text-slate-600 dark:text-slate-300"
+                                >
+                                  Cancel
+                                </button>
+                              </div>
+                            </form>
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                onClick={() => navigateToTab('review', p.id)}
+                                className="text-left w-full p-4 pr-12 rounded-2xl transition-all active:scale-[0.99]"
+                              >
+                                <div
+                                  className={`text-sm font-bold truncate ${isActive ? 'text-indigo-700 dark:text-indigo-300' : 'text-slate-900 dark:text-slate-100'}`}
+                                >
+                                  {p.title}
+                                </div>
+                                <div className="flex items-center gap-2 mt-3 flex-wrap">
+                                  <span
+                                    className={`text-[8px] px-1.5 py-0.5 rounded-md font-black border uppercase tracking-tighter ${paperStatusBadgeClass(p.status)}`}
+                                  >
+                                    {p.status.replace('_', ' ')}
+                                  </span>
+                                  <span className="text-[10px] text-slate-500 dark:text-slate-400 font-bold tabular-nums">
+                                    {n} {n === 1 ? 'question' : 'questions'}
+                                  </span>
+                                  <span className="text-[10px] text-slate-400 dark:text-slate-500 font-bold uppercase">
+                                    {formatDraftTime(p.createdAt)}
+                                  </span>
+                                </div>
+                              </button>
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setArchiveRenameDraft(p.title);
+                                  setArchiveRenamingId(p.id);
+                                }}
+                                className="absolute top-3 right-3 p-1.5 rounded-lg text-slate-400 hover:text-indigo-600 dark:hover:text-indigo-400 hover:bg-slate-100 dark:hover:bg-slate-700/50 transition-colors"
+                                title="Rename"
+                                aria-label={`Rename ${p.title}`}
+                              >
+                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                                </svg>
+                              </button>
+                            </>
+                          )}
+                        </div>
                       );
                     })}
                   </div>
@@ -384,15 +537,68 @@ const App: React.FC = () => {
 
       {activeTab === 'approval' && (
         <div className="space-y-4 lg:space-y-6">
-           <header className="mb-6 lg:mb-8 flex justify-between items-end border-b border-slate-100 dark:border-slate-800 pb-5">
-            <div>
+           <header className="mb-6 lg:mb-8 flex flex-col gap-4 sm:flex-row sm:justify-between sm:items-end border-b border-slate-100 dark:border-slate-800 pb-5">
+            <div className="min-w-0 flex-1">
               <h1 className="text-2xl lg:text-3xl font-black text-slate-900 dark:text-slate-50 tracking-tight">Approval Queue</h1>
+              {currentPaper ? (
+                paperTitleEditing ? (
+                  <form
+                    className="flex flex-col sm:flex-row sm:items-center gap-2 mt-3 max-w-2xl"
+                    onSubmit={async (e) => {
+                      e.preventDefault();
+                      if (await handleRenamePaper(currentPaper.id, paperTitleDraft)) setPaperTitleEditing(false);
+                    }}
+                  >
+                    <input
+                      value={paperTitleDraft}
+                      onChange={(e) => setPaperTitleDraft(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') setPaperTitleEditing(false);
+                      }}
+                      className="flex-1 min-w-0 text-lg font-bold bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-600 rounded-xl px-3 py-2 text-slate-900 dark:text-slate-50"
+                      maxLength={MAX_PAPER_TITLE_LEN}
+                      autoFocus
+                      aria-label="Paper name"
+                    />
+                    <div className="flex items-center gap-2 shrink-0">
+                      <button type="submit" className="px-4 py-2 rounded-xl bg-rose-600 hover:bg-rose-700 text-white text-[10px] font-black uppercase tracking-widest">
+                        Save
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setPaperTitleEditing(false)}
+                        className="px-4 py-2 rounded-xl border border-slate-200 dark:border-slate-600 text-[10px] font-black uppercase text-slate-600 dark:text-slate-300"
+                      >
+                        Cancel
+                      </button>
+                    </div>
+                  </form>
+                ) : (
+                  <div className="flex items-center gap-2 mt-2 min-w-0">
+                    <p className="text-base lg:text-lg font-bold text-slate-800 dark:text-slate-200 truncate min-w-0">{currentPaper.title}</p>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setPaperTitleDraft(currentPaper.title);
+                        setPaperTitleEditing(true);
+                      }}
+                      className="shrink-0 p-2 rounded-xl text-slate-400 hover:text-rose-600 dark:hover:text-rose-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+                      title="Rename paper"
+                      aria-label="Rename paper"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                      </svg>
+                    </button>
+                  </div>
+                )
+              ) : null}
               <p className="text-xs lg:text-sm text-slate-500 dark:text-slate-400 font-medium mt-1">Final review of submitted content.</p>
             </div>
             {currentPaper && (
-              <button 
+              <button
                 onClick={() => generateAuditPDF(currentPaper)}
-                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95"
+                className="flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-[10px] font-black uppercase tracking-widest rounded-xl transition-all shadow-lg active:scale-95 shrink-0 self-start sm:self-auto"
               >
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
                 Export PDF
